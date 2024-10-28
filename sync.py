@@ -1,20 +1,25 @@
-import os, subprocess, dotbot, pwd, grp
+import grp
+import os
+import pwd
+import subprocess
 from glob import glob
+
+import dotbot
 
 
 class Sync(dotbot.Plugin):
-    '''
+    """
     Sync dotfiles
-    '''
+    """
 
-    _directive = 'sync'
+    _directive = "sync"
 
     def can_handle(self, directive):
         return directive == self._directive
 
     def handle(self, directive, data):
         if directive != self._directive:
-            raise ValueError('Sync cannot handle directive %s' % directive)
+            raise ValueError(f"Sync cannot handle directive {directive}")
         return self._process_records(data)
 
     def _chmodown(self, path, chmod, uid, gid):
@@ -29,33 +34,29 @@ class Sync(dotbot.Plugin):
 
     def _process_records(self, records):
         success = True
-        defaults = self._context.defaults().get('sync', {})
-        with open(os.devnull, 'w') as devnull:
+        defaults = self._context.defaults().get("sync", {})
+
+        with open(os.devnull, "w"):
             for destination, source in records.items():
-                (destination,) = Sync.expand_path(destination, globs=False)
-                rsync = defaults.get('rsync', 'rsync')
-                options = defaults.get('options', ['--delete', '--safe-links'])
-                create = defaults.get('create', False)
-                fmode = defaults.get('fmode', 644)
-                dmode = defaults.get('dmode', 755)
-                owner = defaults.get('owner', pwd.getpwuid(os.getuid()).pw_name)
-                group = defaults.get('group', grp.getgrgid(os.getgid()).gr_name)
-                stdout = stderr = devnull
+                destination = Sync.expand_path(destination, globs=False)
+                rsync = defaults.get("rsync", "rsync")
+                options = defaults.get("options", ["--delete", "--safe-links"])
+                create = defaults.get("create", False)
+                fmode = defaults.get("fmode", 644)
+                dmode = defaults.get("dmode", 755)
+                owner = defaults.get("owner", pwd.getpwuid(os.getuid()).pw_name)
+                group = defaults.get("group", grp.getgrgid(os.getgid()).gr_name)
+
                 if isinstance(source, dict):
                     # extended config
-                    create = source.get('create', create)
-                    rsync = source.get('rsync', rsync)
-                    options = source.get('options', options)
-                    fmode = source.get('fmode', fmode)
-                    dmode = source.get('dmode', dmode)
-                    owner = source.get('owner', owner)
-                    group = source.get('group', group)
-                    paths_expression = source['path']
-
-                    if source.get('stdout', defaults.get('stdout', False)) is True:
-                        stdout = None
-                    if source.get('stderr', defaults.get('stderr', False)) is True:
-                        stderr = None
+                    create = source.get("create", create)
+                    rsync = source.get("rsync", rsync)
+                    options = source.get("options", options)
+                    fmode = source.get("fmode", fmode)
+                    dmode = source.get("dmode", dmode)
+                    owner = source.get("owner", owner)
+                    group = source.get("group", group)
+                    paths_expression = source["path"]
                 else:
                     paths_expression = source
 
@@ -63,20 +64,31 @@ class Sync(dotbot.Plugin):
                 gid = grp.getgrnam(group).gr_gid
 
                 if create:
-                    success &= self._create(destination, int('%s' % dmode, 8), uid, gid)
+                    success &= self._create(destination, int(str(dmode), 8), uid, gid)
 
                 paths = Sync.expand_path(paths_expression, globs=True)
 
                 if len(paths) > 1:
                     self._log.lowinfo(
-                        'Synchronizing expression {} -> {}'.format(paths_expression, destination))
+                        f"Synchronizing expression {paths_expression} -> {destination}"
+                    )
 
                 for path in paths:
-                    success &= self._sync(path, destination, dmode, fmode, owner, group, rsync, options, stdout, stderr)
+                    success &= self._sync(
+                        path,
+                        destination,
+                        dmode,
+                        fmode,
+                        owner,
+                        group,
+                        rsync,
+                        options,
+                    )
+
         if success:
-            self._log.info('All synchronizations have been done')
+            self._log.info("All synchronizations have been done")
         else:
-            self._log.error('Some synchronizations were not successful')
+            self._log.error("Some synchronizations were not successful")
         return success
 
     def _create(self, path, dmode, uid, gid):
@@ -87,38 +99,57 @@ class Sync(dotbot.Plugin):
                 os.mkdir(parent, dmode)
                 self._chmodown(parent, dmode, uid, gid)
             except Exception as e:
-                self._log.warning('Failed to create directory %s. %s' % (parent, e))
+                self._log.warning(f"Failed to create directory {parent}. {e}")
                 success = False
             else:
-                self._log.lowinfo('Creating directory %s' % parent)
+                self._log.lowinfo(f"Creating directory {parent}")
         return success
 
-    def _sync(self, source, destination, dmode, fmode, owner, group, rsync, options, stdout, stderr):
-        '''
+    def _sync(
+        self,
+        source,
+        destination,
+        dmode,
+        fmode,
+        owner,
+        group,
+        rsync,
+        options,
+    ):
+        """
         Synchronizes source to destination
 
         Returns true if successfully synchronized files.
-        '''
+        """
         success = False
         source = os.path.join(self._context.base_directory(), source)
         destination = os.path.expanduser(destination)
         try:
-            cmd = [rsync,
-                    '--update',
-                    '--recursive',
-                    '--group',
-                    '--owner',
-                    '--chown=%s:%s' % (owner, group),
-                    '--chmod=D%s,F%s' % (dmode, fmode)]
+            cmd = [
+                rsync,
+                "--update",
+                "--recursive",
+                "--group",
+                "--owner",
+                f"--chown={owner}:{group}",
+                f"--chmod=D{dmode},F{fmode}",
+            ]
             if os.path.isdir(source):
-                source = '%s/' % source
-            ret = subprocess.call(cmd + options + [source, destination],
-                    stdout=stdout, stderr=stderr, cwd=self._context.base_directory())
-            if ret != 0:
-                self._log.warning('Failed to sync %s -> %s' % (source, destination))
+                source = f"{source}/"
+            try:
+                cmd += options + [f'"{source}"', f'"{destination}"']
+                subprocess.run(
+                    " ".join(cmd),
+                    shell=True,
+                    check=True,
+                    capture_output=True,
+                    cwd=self._context.base_directory(),
+                )
+            except subprocess.CalledProcessError as e:
+                self._log.warning(f"Failed to sync {source} -> {destination}. {e}")
             else:
                 success = True
-                self._log.lowinfo('Synchronized %s -> %s' % (source, destination))
+                self._log.lowinfo(f"Synchronized {source} -> {destination}")
         except Exception as e:
-            self._log.warning('Failed to sync %s -> %s. %s' % (source, destination, e))
+            self._log.warning(f"Failed to sync {source} -> {destination}. {e}")
         return success
